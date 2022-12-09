@@ -40,10 +40,42 @@ func BuildClient(cnf *viper.Viper, database *dao.Dao) {
 func Run() {
 	log.Print("Binance auto_trader start...")
 	priceRecorder()
-	anchoredTrader()
+	anchoredPurchaser()
+	orderManger()
 }
 
-func anchoredTrader() {
+func priceRecorder() {
+	ticker := time.NewTicker(1800 * time.Second)
+	defer ticker.Stop()
+
+	ctx := context.Background()
+	for {
+		select {
+		case <-ticker.C:
+			prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
+			if err != nil {
+				log.Error().Msg(err.Error())
+				continue
+			}
+
+			var data []*dao.Price
+			for _, price := range prices {
+				data = append(data, &dao.Price{
+					Symbol: price.Symbol,
+					Price:  price.Price,
+				})
+			}
+
+			err = db.Recode(ctx, data)
+			if err != nil {
+				log.Error().Msg(err.Error())
+				continue
+			}
+		}
+	}
+}
+
+func anchoredPurchaser() {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
@@ -100,15 +132,18 @@ func anchoredTrader() {
 				if time.Now().Unix()-data.TranscationTime < 1800 {
 					continue
 				}
+
+				quantity := usdt / nowPrice / 10
+
 				if (nowPrice-anchoredPrice)/anchoredPrice < -0.05 {
-					// order, err := client.NewCreateOrderService().Symbol(price.Symbol).
-					// 	Side(binance.SideTypeBuy).Type(binance.OrderTypeLimit).
-					// 	TimeInForce(binance.TimeInForceTypeGTC).Quantity("5").
-					// 	Price("").Do(ctx)
-					// if err != nil {
-					// 	log.Error().Msg(err.Error())
-					// }
-					// log.Print("order: ", order)
+					order, err := client.NewCreateOrderService().Symbol(price.Symbol).
+						Side(binance.SideTypeBuy).Type(binance.OrderTypeLimit).
+						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 10, 64)).
+						Price(price.Price).Do(ctx)
+					if err != nil {
+						log.Error().Msg(err.Error())
+					}
+					log.Print("order: ", *order)
 				}
 			}
 
@@ -118,33 +153,6 @@ func anchoredTrader() {
 	}
 }
 
-func priceRecorder() {
-	ticker := time.NewTicker(1800 * time.Second)
-	defer ticker.Stop()
+func orderManger() {
 
-	ctx := context.Background()
-	for {
-		select {
-		case <-ticker.C:
-			prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
-			if err != nil {
-				log.Error().Msg(err.Error())
-				continue
-			}
-
-			var data []*dao.Price
-			for _, price := range prices {
-				data = append(data, &dao.Price{
-					Symbol: price.Symbol,
-					Price:  price.Price,
-				})
-			}
-
-			err = db.Recode(ctx, data)
-			if err != nil {
-				log.Error().Msg(err.Error())
-				continue
-			}
-		}
-	}
 }
