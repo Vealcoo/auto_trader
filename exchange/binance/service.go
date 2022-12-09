@@ -1,13 +1,12 @@
 package binance
 
 import (
-	"auto_trader/exchange/binance/dao"
+	"auto_trader/dao"
 	"context"
 	"strconv"
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"go.mongodb.org/mongo-driver/mongo"
 
 	"github.com/adshao/go-binance/v2"
 	"github.com/adshao/go-binance/v2/delivery"
@@ -25,7 +24,7 @@ var checkList []string
 
 var db *dao.Dao
 
-func BuildClient(cnf *viper.Viper, database *mongo.Database) {
+func BuildClient(cnf *viper.Viper, database *dao.Dao) {
 	apiKey = cnf.GetString("binance.apiKey")
 	secretKey = cnf.GetString("binance.secretKey")
 
@@ -35,7 +34,7 @@ func BuildClient(cnf *viper.Viper, database *mongo.Database) {
 
 	checkList = cnf.GetStringSlice("checkList")
 
-	db = dao.NewBinanceDao(database)
+	db = database
 }
 
 func Run() {

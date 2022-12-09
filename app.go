@@ -1,6 +1,7 @@
 package autotrader
 
 import (
+	"auto_trader/dao"
 	"auto_trader/exchange/binance"
 	"context"
 
@@ -24,7 +25,7 @@ func configInit() {
 	}
 }
 
-var database *mongo.Database
+var database *dao.Dao
 
 func dbConn() {
 	mongoClient, err := mongo.Connect(context.Background(), options.Client().ApplyURI(cnf.GetString("mongo.applyURI")))
@@ -32,10 +33,10 @@ func dbConn() {
 		panic(err)
 	}
 
-	database = mongoClient.Database("auto_trader")
+	database = dao.NewDao(mongoClient.Database("auto_trader"))
 }
 
-func buildClient(cnf *viper.Viper, database *mongo.Database) {
+func buildClient(cnf *viper.Viper, database *dao.Dao) {
 	binance.BuildClient(cnf, database)
 }
 

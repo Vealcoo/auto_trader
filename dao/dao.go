@@ -11,7 +11,7 @@ type Dao struct {
 	price *mongo.Collection
 }
 
-func NewBinanceDao(c *mongo.Database) *Dao {
+func NewDao(c *mongo.Database) *Dao {
 	return &Dao{
 		price: c.Collection("price"),
 	}
