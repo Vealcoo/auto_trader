@@ -3,10 +3,14 @@ package binance
 import (
 	"auto_trader/dao"
 	"context"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"go.mongodb.org/mongo-driver/mongo"
 
 	"github.com/adshao/go-binance/v2"
 	"github.com/adshao/go-binance/v2/delivery"
@@ -24,7 +28,7 @@ var checkList []string
 
 var db *dao.Dao
 
-func BuildClient(cnf *viper.Viper, database *dao.Dao) {
+func BuildClient(cnf *viper.Viper, database *mongo.Database) {
 	apiKey = cnf.GetString("binance.apiKey")
 	secretKey = cnf.GetString("binance.secretKey")
 
@@ -34,44 +38,61 @@ func BuildClient(cnf *viper.Viper, database *dao.Dao) {
 
 	checkList = cnf.GetStringSlice("checkList")
 
-	db = database
+	db = dao.NewDao(database)
 }
 
 func Run() {
 	log.Print("Binance auto_trader start...")
-	priceRecorder()
-	anchoredPurchaser()
-	orderManger()
+
+	go priceRecorder()
+	go anchoredPurchaser()
+	go orderManger()
+	go seller()
+
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sc)
+
+	<-sc
+	log.Print("Binance auto_trader close...")
 }
 
 func priceRecorder() {
-	ticker := time.NewTicker(1800 * time.Second)
+	ticker := time.NewTicker(3000 * time.Second)
 	defer ticker.Stop()
 
+	fristIn := true
 	ctx := context.Background()
 	for {
+		if fristIn {
+			recorder(ctx)
+			fristIn = false
+		}
 		select {
 		case <-ticker.C:
-			prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
-			if err != nil {
-				log.Error().Msg(err.Error())
-				continue
-			}
-
-			var data []*dao.Price
-			for _, price := range prices {
-				data = append(data, &dao.Price{
-					Symbol: price.Symbol,
-					Price:  price.Price,
-				})
-			}
-
-			err = db.Recode(ctx, data)
-			if err != nil {
-				log.Error().Msg(err.Error())
-				continue
-			}
+			recorder(ctx)
 		}
+	}
+}
+
+func recorder(ctx context.Context) {
+	prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
+	if err != nil {
+		log.Error().Msg(err.Error())
+	}
+
+	var data []*dao.Price
+	for _, price := range prices {
+		data = append(data, &dao.Price{
+			Symbol:   price.Symbol,
+			Price:    price.Price,
+			Exchange: "binance",
+		})
+	}
+
+	err = db.UpdatePrices(ctx, data)
+	if err != nil {
+		log.Error().Msg(err.Error())
 	}
 }
 
@@ -83,22 +104,20 @@ func anchoredPurchaser() {
 
 	ctx := context.Background()
 	for {
-		priceRecorder()
 		select {
 		case <-ticker.C:
 			res, err := client.NewGetAccountService().Do(ctx)
 			if err != nil {
 				log.Error().Msg(err.Error())
+				continue
 			}
 			for _, v := range res.Balances {
 				if v.Asset == "USDT" {
-					log.Print(v)
 					if v, err := strconv.ParseFloat(v.Free, 64); err == nil {
 						usdt = v
 					}
 				}
 			}
-			log.Print("USDT: ", usdt)
 
 			// Get the current prices of assets on Binance
 			prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
@@ -110,9 +129,11 @@ func anchoredPurchaser() {
 			// Check for arbitrage opportunities by comparing the prices of assets on different markets or exchanges
 			// (omitted for simplicity)
 			for _, price := range prices {
-				log.Printf("%s: %s", price.Symbol, price.Price)
-
-				data, err := db.FindOne(ctx, &dao.PriceFilter{Symbol: price.Symbol})
+				data, err := db.FindPrice(ctx,
+					&dao.PriceFilter{
+						Symbol:   price.Symbol,
+						Exchange: "binance",
+					})
 				if err != nil {
 					log.Error().Msg(err.Error())
 					continue
@@ -142,8 +163,9 @@ func anchoredPurchaser() {
 						Price(price.Price).Do(ctx)
 					if err != nil {
 						log.Error().Msg(err.Error())
+						continue
 					}
-					log.Print("order: ", *order)
+					log.Info().Interface("anchoredPurchaser, order:", order)
 				}
 			}
 
@@ -154,5 +176,125 @@ func anchoredPurchaser() {
 }
 
 func orderManger() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
 
+	ctx := context.Background()
+	for {
+		select {
+		case <-ticker.C:
+			// get all open orders
+			orders, err := client.NewListOpenOrdersService().Do(ctx)
+			if err != nil {
+				log.Error().Msg(err.Error())
+				continue
+			}
+
+			if len(orders) == 0 {
+				continue
+			}
+
+			prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
+			if err != nil {
+				log.Error().Msg(err.Error())
+				continue
+			}
+
+			var pricesMap = make(map[string]string)
+			for _, price := range prices {
+				pricesMap[price.Price] = price.Price
+			}
+
+			for _, order := range orders {
+				if time.Now().Unix()-order.Time > 3600*12 {
+					_, err := client.NewCancelOrderService().Symbol(order.Symbol).
+						OrderID(order.OrderID).Do(ctx)
+					if err != nil {
+						log.Error().Msg(err.Error())
+						continue
+					}
+				}
+
+				if order.Status == binance.OrderStatusTypeFilled || order.Status == binance.OrderStatusTypePartiallyFilled {
+					var side string
+					if order.Side == binance.SideTypeBuy {
+						side = "buy"
+					} else if order.Side == binance.SideTypeSell {
+						side = "sell"
+					}
+
+					err = db.CreateOrder(ctx,
+						&dao.Order{
+							OrderId:  order.OrderID,
+							Symbol:   order.Symbol,
+							Price:    order.Price,
+							Quantity: order.ExecutedQuantity,
+							Exchange: "binance",
+							Side:     side,
+						})
+					if err != nil {
+						log.Error().Msg(err.Error())
+						continue
+					}
+				}
+			}
+		}
+	}
+}
+
+func seller() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	ctx := context.Background()
+	for {
+		select {
+		case <-ticker.C:
+			orders, err := db.FindOrder(ctx, &dao.OrderFilter{Side: "buy", Exchange: "binance"})
+			if err != nil {
+				log.Error().Msg(err.Error())
+				continue
+			}
+			if len(orders) == 0 {
+				continue
+			}
+
+			prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
+			if err != nil {
+				log.Error().Msg(err.Error())
+				continue
+			}
+
+			var pricesMap = make(map[string]string)
+			for _, price := range prices {
+				pricesMap[price.Price] = price.Price
+			}
+
+			for _, order := range orders {
+				orderPrice, err := strconv.ParseFloat(order.Price, 64)
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
+				}
+
+				nowPrice, err := strconv.ParseFloat(pricesMap[order.Symbol], 64)
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
+				}
+
+				if (nowPrice-orderPrice)/orderPrice > 0.06 {
+					sellOrder, err := client.NewCreateOrderService().Symbol(order.Symbol).
+						Side(binance.SideTypeSell).Type(binance.OrderTypeLimit).
+						TimeInForce(binance.TimeInForceTypeGTC).Quantity(order.Quantity).
+						Price(pricesMap[order.Symbol]).Do(ctx)
+					if err != nil {
+						log.Error().Msg(err.Error())
+						continue
+					}
+					log.Info().Interface("seller, order:", *sellOrder)
+				}
+			}
+		}
+	}
 }
