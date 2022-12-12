@@ -58,7 +58,7 @@ func Run() {
 }
 
 func priceRecorder() {
-	ticker := time.NewTicker(3000 * time.Second)
+	ticker := time.NewTicker(3600 * time.Second)
 	defer ticker.Stop()
 
 	fristIn := true
@@ -156,7 +156,7 @@ func anchoredPurchaser() {
 
 				quantity := usdt / nowPrice / 10
 
-				if (nowPrice-anchoredPrice)/anchoredPrice < -0.05 {
+				if (nowPrice-anchoredPrice)/anchoredPrice < -0.03 {
 					order, err := client.NewCreateOrderService().Symbol(price.Symbol).
 						Side(binance.SideTypeBuy).Type(binance.OrderTypeLimit).
 						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 10, 64)).
@@ -166,6 +166,16 @@ func anchoredPurchaser() {
 						continue
 					}
 					log.Info().Interface("anchoredPurchaser, order:", order)
+
+					err = db.UpdatePrice(ctx, &dao.Price{
+						Symbol:          data.Symbol,
+						Exchange:        data.Exchange,
+						TranscationTime: time.Now().Unix(),
+					})
+					if err != nil {
+						log.Error().Msg(err.Error())
+						continue
+					}
 				}
 			}
 
@@ -283,7 +293,7 @@ func seller() {
 					continue
 				}
 
-				if (nowPrice-orderPrice)/orderPrice > 0.06 {
+				if (nowPrice-orderPrice)/orderPrice > 0.05 {
 					sellOrder, err := client.NewCreateOrderService().Symbol(order.Symbol).
 						Side(binance.SideTypeSell).Type(binance.OrderTypeLimit).
 						TimeInForce(binance.TimeInForceTypeGTC).Quantity(order.Quantity).

@@ -64,6 +64,24 @@ func (dao *Dao) UpdatePrices(ctx context.Context, data []*Price) error {
 	return nil
 }
 
+func (dao *Dao) UpdatePrice(ctx context.Context, data *Price) error {
+	_, err := dao.price.UpdateOne(ctx,
+		bson.M{
+			"symbol":   data.Symbol,
+			"exchange": data.Exchange,
+		},
+		bson.M{
+			"$set": bson.M{
+				"transcationTime": data.TranscationTime,
+			},
+		})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (dao *Dao) FindPrice(ctx context.Context, f *PriceFilter) (data *Price, err error) {
 	filter := bson.M{}
 
