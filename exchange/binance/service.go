@@ -46,6 +46,7 @@ func Run() {
 
 	go priceRecorder()
 	go anchoredPurchaser()
+	go klinePurchaser()
 	go orderManger()
 	go seller()
 
@@ -126,8 +127,6 @@ func anchoredPurchaser() {
 				continue
 			}
 
-			// Check for arbitrage opportunities by comparing the prices of assets on different markets or exchanges
-			// (omitted for simplicity)
 			for _, price := range prices {
 				data, err := db.FindPrice(ctx,
 					&dao.PriceFilter{
@@ -139,6 +138,10 @@ func anchoredPurchaser() {
 					continue
 				}
 
+				if time.Now().Unix()-data.TranscationTime < 1800 {
+					continue
+				}
+
 				anchoredPrice, err := strconv.ParseFloat(data.Price, 64)
 				if err != nil {
 					log.Error().Msg(err.Error())
@@ -147,10 +150,6 @@ func anchoredPurchaser() {
 				nowPrice, err := strconv.ParseFloat(price.Price, 64)
 				if err != nil {
 					log.Error().Msg(err.Error())
-					continue
-				}
-
-				if time.Now().Unix()-data.TranscationTime < 1800 {
 					continue
 				}
 
@@ -178,9 +177,105 @@ func anchoredPurchaser() {
 					}
 				}
 			}
+		}
+	}
+}
 
-			// If an arbitrage opportunity is found, execute trades on Binance to take advantage of it
-			// (omitted for simplicity)
+func klinePurchaser() {
+	ticker := time.NewTicker(300 * time.Second)
+	defer ticker.Stop()
+
+	var usdt float64
+
+	ctx := context.Background()
+	for {
+		select {
+		case <-ticker.C:
+			res, err := client.NewGetAccountService().Do(ctx)
+			if err != nil {
+				log.Error().Msg(err.Error())
+				continue
+			}
+			for _, v := range res.Balances {
+				if v.Asset == "USDT" {
+					if v, err := strconv.ParseFloat(v.Free, 64); err == nil {
+						usdt = v
+					}
+				}
+			}
+
+			// Get the current prices of assets on Binance
+			prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
+			if err != nil {
+				log.Error().Msg(err.Error())
+				continue
+			}
+
+			for _, price := range prices {
+				data, err := db.FindPrice(ctx,
+					&dao.PriceFilter{
+						Symbol:   price.Symbol,
+						Exchange: "binance",
+					})
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
+				}
+
+				if time.Now().Unix()-data.TranscationTime < 1800 {
+					continue
+				}
+
+				kline, err := client.NewKlinesService().Interval("8h").Limit(1).Symbol(price.Symbol).Do(ctx)
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
+				}
+
+				klineLowPrice, err := strconv.ParseFloat(kline[0].Low, 64)
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
+				}
+
+				klineHighPrice, err := strconv.ParseFloat(kline[0].High, 64)
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
+				}
+
+				avgPrice := (klineLowPrice + klineHighPrice) / 2
+
+				nowPrice, err := strconv.ParseFloat(price.Price, 64)
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
+				}
+
+				quantity := usdt / nowPrice / 10
+
+				if (nowPrice-avgPrice)/avgPrice < -0.05 {
+					order, err := client.NewCreateOrderService().Symbol(price.Symbol).
+						Side(binance.SideTypeBuy).Type(binance.OrderTypeLimit).
+						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 10, 64)).
+						Price(price.Price).Do(ctx)
+					if err != nil {
+						log.Error().Msg(err.Error())
+						continue
+					}
+					log.Info().Interface("klinePurchaser, order:", order)
+
+					err = db.UpdatePrice(ctx, &dao.Price{
+						Symbol:          data.Symbol,
+						Exchange:        data.Exchange,
+						TranscationTime: time.Now().Unix(),
+					})
+					if err != nil {
+						log.Error().Msg(err.Error())
+						continue
+					}
+				}
+			}
 		}
 	}
 }
@@ -193,7 +288,6 @@ func orderManger() {
 	for {
 		select {
 		case <-ticker.C:
-			// get all open orders
 			orders, err := client.NewListOpenOrdersService().Do(ctx)
 			if err != nil {
 				log.Error().Msg(err.Error())
