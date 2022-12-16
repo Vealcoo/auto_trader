@@ -158,7 +158,7 @@ func anchoredPurchaser() {
 				if (nowPrice-anchoredPrice)/anchoredPrice < -0.03 {
 					order, err := client.NewCreateOrderService().Symbol(price.Symbol).
 						Side(binance.SideTypeBuy).Type(binance.OrderTypeLimit).
-						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 10, 64)).
+						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 2, 64)).
 						Price(price.Price).Do(ctx)
 					if err != nil {
 						log.Error().Msg(err.Error())
@@ -257,7 +257,7 @@ func klinePurchaser() {
 				if (nowPrice-avgPrice)/avgPrice < -0.05 {
 					order, err := client.NewCreateOrderService().Symbol(price.Symbol).
 						Side(binance.SideTypeBuy).Type(binance.OrderTypeLimit).
-						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 10, 64)).
+						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 2, 64)).
 						Price(price.Price).Do(ctx)
 					if err != nil {
 						log.Error().Msg(err.Error())
