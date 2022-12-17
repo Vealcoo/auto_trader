@@ -19,9 +19,16 @@ type Order struct {
 	Quantity string `bson:"quantity"`
 	Exchange string `bson:"exchange"`
 	Side     string `bson:"side"`
+	Check    bool   `bson:"check"`
 }
 
 type OrderFilter struct {
+	OrderId  int64  `bson:"orderId,omitempty"`
 	Exchange string `bson:"exchange,omitempty"`
 	Side     string `bson:"side,omitempty"`
+	Check    bool   `bson:"check,omitempty"`
+}
+
+type OrderUpdate struct {
+	Check bool `bson:"check,omitempty"`
 }

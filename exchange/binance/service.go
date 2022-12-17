@@ -164,7 +164,7 @@ func anchoredPurchaser() {
 						log.Error().Msg(err.Error())
 						continue
 					}
-					log.Info().Interface("anchoredPurchaser, order:", order)
+					log.Info().Msgf("anchoredPurchaser, order:", order)
 
 					err = db.UpdatePrice(ctx, &dao.Price{
 						Symbol:          data.Symbol,
@@ -263,7 +263,7 @@ func klinePurchaser() {
 						log.Error().Msg(err.Error())
 						continue
 					}
-					log.Info().Interface("klinePurchaser, order:", order)
+					log.Info().Msgf("klinePurchaser, order:", order)
 
 					err = db.UpdatePrice(ctx, &dao.Price{
 						Symbol:          data.Symbol,
@@ -281,64 +281,58 @@ func klinePurchaser() {
 }
 
 func orderManger() {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
 	ctx := context.Background()
 	for {
 		select {
 		case <-ticker.C:
-			orders, err := client.NewListOpenOrdersService().Do(ctx)
-			if err != nil {
-				log.Error().Msg(err.Error())
-				continue
-			}
-
-			if len(orders) == 0 {
-				continue
-			}
-
-			prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
-			if err != nil {
-				log.Error().Msg(err.Error())
-				continue
-			}
-
-			var pricesMap = make(map[string]string)
-			for _, price := range prices {
-				pricesMap[price.Price] = price.Price
-			}
-
-			for _, order := range orders {
-				if time.Now().Unix()-order.Time > 3600*12 {
-					_, err := client.NewCancelOrderService().Symbol(order.Symbol).
-						OrderID(order.OrderID).Do(ctx)
-					if err != nil {
-						log.Error().Msg(err.Error())
-						continue
-					}
+			for _, symbol := range checkList {
+				orders, err := client.NewListOrdersService().Symbol(symbol).Do(ctx)
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
 				}
 
-				if order.Status == binance.OrderStatusTypeFilled || order.Status == binance.OrderStatusTypePartiallyFilled {
-					var side string
-					if order.Side == binance.SideTypeBuy {
-						side = "buy"
-					} else if order.Side == binance.SideTypeSell {
-						side = "sell"
-					}
+				if len(orders) == 0 {
+					continue
+				}
 
-					err = db.CreateOrder(ctx,
-						&dao.Order{
-							OrderId:  order.OrderID,
-							Symbol:   order.Symbol,
-							Price:    order.Price,
-							Quantity: order.ExecutedQuantity,
-							Exchange: "binance",
-							Side:     side,
-						})
-					if err != nil {
-						log.Error().Msg(err.Error())
-						continue
+				prices, err := client.NewListPricesService().Symbols(checkList).Do(ctx)
+				if err != nil {
+					log.Error().Msg(err.Error())
+					continue
+				}
+
+				var pricesMap = make(map[string]string)
+				for _, price := range prices {
+					pricesMap[price.Price] = price.Price
+				}
+
+				for _, order := range orders {
+					if order.Status == binance.OrderStatusTypeFilled || order.Status == binance.OrderStatusTypePartiallyFilled {
+						log.Info().Msgf("order", order)
+						var side string
+						if order.Side == binance.SideTypeBuy {
+							side = "buy"
+						} else if order.Side == binance.SideTypeSell {
+							side = "sell"
+						}
+
+						err = db.CreateOrder(ctx,
+							&dao.Order{
+								OrderId:  order.OrderID,
+								Symbol:   order.Symbol,
+								Price:    order.Price,
+								Quantity: order.ExecutedQuantity,
+								Exchange: "binance",
+								Side:     side,
+							})
+						if err != nil {
+							log.Error().Msg(err.Error())
+							continue
+						}
 					}
 				}
 			}
@@ -354,7 +348,7 @@ func seller() {
 	for {
 		select {
 		case <-ticker.C:
-			orders, err := db.FindOrder(ctx, &dao.OrderFilter{Side: "buy", Exchange: "binance"})
+			orders, err := db.FindOrder(ctx, &dao.OrderFilter{Side: "buy", Exchange: "binance", Check: false})
 			if err != nil {
 				log.Error().Msg(err.Error())
 				continue
@@ -371,7 +365,7 @@ func seller() {
 
 			var pricesMap = make(map[string]string)
 			for _, price := range prices {
-				pricesMap[price.Price] = price.Price
+				pricesMap[price.Symbol] = price.Price
 			}
 
 			for _, order := range orders {
@@ -396,7 +390,13 @@ func seller() {
 						log.Error().Msg(err.Error())
 						continue
 					}
-					log.Info().Interface("seller, order:", *sellOrder)
+					log.Info().Msgf("seller, order:", sellOrder)
+
+					err = db.UpdateOrder(ctx, order.OrderId, order.Exchange, &dao.OrderUpdate{Check: true})
+					if err != nil {
+						log.Error().Msg(err.Error())
+						continue
+					}
 				}
 			}
 		}

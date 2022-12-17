@@ -5,6 +5,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type Dao struct {
@@ -105,6 +106,11 @@ func (dao *Dao) FindPrice(ctx context.Context, f *PriceFilter) (data *Price, err
 }
 
 func (dao *Dao) CreateOrder(ctx context.Context, data *Order) error {
+	order, _ := dao.FindOrder(ctx, &OrderFilter{OrderId: data.OrderId, Exchange: data.Exchange})
+	if len(order) != 0 {
+		return nil
+	}
+
 	_, err := dao.order.InsertOne(ctx, data)
 	if err != nil {
 		return err
@@ -115,7 +121,13 @@ func (dao *Dao) CreateOrder(ctx context.Context, data *Order) error {
 
 func (dao *Dao) FindOrder(ctx context.Context, f *OrderFilter) (data []*Order, err error) {
 	filter := bson.M{}
-	filter["check"] = false
+	if f.Check != false {
+		filter["check"] = f.Check
+	}
+
+	if f.OrderId != 0 {
+		filter["orderId"] = f.OrderId
+	}
 
 	if f.Side != "" {
 		filter["side"] = f.Side
@@ -125,9 +137,10 @@ func (dao *Dao) FindOrder(ctx context.Context, f *OrderFilter) (data []*Order, e
 		filter["exchange"] = f.Exchange
 	}
 
-	cur, err := dao.price.Find(
+	cur, err := dao.order.Find(
 		ctx,
 		filter,
+		options.Find(),
 	)
 	if err != nil {
 		return nil, err
@@ -138,4 +151,25 @@ func (dao *Dao) FindOrder(ctx context.Context, f *OrderFilter) (data []*Order, e
 	}
 
 	return
+}
+
+func (dao *Dao) UpdateOrder(ctx context.Context, orderId int64, exchange string, u *OrderUpdate) error {
+	opt := bson.M{}
+	if u.Check != false {
+		opt["check"] = u.Check
+	}
+
+	_, err := dao.order.UpdateOne(
+		ctx,
+		bson.M{
+			"orderId":  orderId,
+			"exchange": exchange,
+		},
+		opt,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
