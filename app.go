@@ -4,6 +4,7 @@ import (
 	"auto_trader/exchange/binance"
 	"context"
 
+	"github.com/Vealcoo/go-pkg/notify"
 	"github.com/spf13/viper"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -35,14 +36,22 @@ func dbConn() {
 	database = mongoClient.Database("auto_trader")
 }
 
-func buildClient(cnf *viper.Viper, database *mongo.Database) {
-	binance.BuildClient(cnf, database)
+var alert *notify.Notify
+
+func alertInit() {
+	alert = notify.New()
+	alert.SetTelegramNotify(cnf.GetString("notify.TgToken"))
+}
+
+func buildClient(cnf *viper.Viper, database *mongo.Database, alert *notify.Notify) {
+	binance.BuildClient(cnf, database, alert)
 }
 
 func Run() {
 	configInit()
 	dbConn()
-	buildClient(cnf, database)
+	alertInit()
+	buildClient(cnf, database, alert)
 
 	binance.Run()
 }

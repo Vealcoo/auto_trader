@@ -9,36 +9,29 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Vealcoo/go-pkg/notify"
 	"github.com/rs/zerolog/log"
 	"go.mongodb.org/mongo-driver/mongo"
 
 	"github.com/adshao/go-binance/v2"
-	"github.com/adshao/go-binance/v2/delivery"
-	"github.com/adshao/go-binance/v2/futures"
 	"github.com/spf13/viper"
 )
 
 var apiKey, secretKey string
-
 var client *binance.Client
-var futuresClient *futures.Client
-var deliveryClient *delivery.Client
-
 var checkList []string
 
 var db *dao.Dao
+var alert *notify.Notify
 
-func BuildClient(cnf *viper.Viper, database *mongo.Database) {
+func BuildClient(cnf *viper.Viper, database *mongo.Database, n *notify.Notify) {
 	apiKey = cnf.GetString("binance.apiKey")
 	secretKey = cnf.GetString("binance.secretKey")
-
 	client = binance.NewClient(apiKey, secretKey)
-	futuresClient = binance.NewFuturesClient(apiKey, secretKey)   // USDT-M Futures
-	deliveryClient = binance.NewDeliveryClient(apiKey, secretKey) // Coin-M Futures
-
 	checkList = cnf.GetStringSlice("checkList")
 
 	db = dao.NewDao(database)
+	alert = n
 }
 
 func Run() {
@@ -161,10 +154,11 @@ func anchoredPurchaser() {
 						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 2, 64)).
 						Price(price.Price).Do(ctx)
 					if err != nil {
-						log.Error().Msg(err.Error())
+						log.Error().Msgf("anchoredPurchaser, create order error:", err.Error())
 						continue
 					}
 					log.Info().Msgf("anchoredPurchaser, order:", order)
+					alert.NewTgClient().Notify(order, 515597060)
 
 					err = db.UpdatePrice(ctx, &dao.Price{
 						Symbol:          data.Symbol,
@@ -260,10 +254,11 @@ func klinePurchaser() {
 						TimeInForce(binance.TimeInForceTypeGTC).Quantity(strconv.FormatFloat(quantity, 'f', 2, 64)).
 						Price(price.Price).Do(ctx)
 					if err != nil {
-						log.Error().Msg(err.Error())
+						log.Error().Msgf("klinePurchaser, create order error:", err)
 						continue
 					}
 					log.Info().Msgf("klinePurchaser, order:", order)
+					alert.NewTgClient().Notify(order, 515597060)
 
 					err = db.UpdatePrice(ctx, &dao.Price{
 						Symbol:          data.Symbol,
@@ -312,7 +307,6 @@ func orderManger() {
 
 				for _, order := range orders {
 					if order.Status == binance.OrderStatusTypeFilled || order.Status == binance.OrderStatusTypePartiallyFilled {
-						log.Info().Msgf("order", order)
 						var side string
 						if order.Side == binance.SideTypeBuy {
 							side = "buy"
@@ -387,10 +381,11 @@ func seller() {
 						TimeInForce(binance.TimeInForceTypeGTC).Quantity(order.Quantity).
 						Price(pricesMap[order.Symbol]).Do(ctx)
 					if err != nil {
-						log.Error().Msg(err.Error())
+						log.Error().Msgf("seller, create order error:", err)
 						continue
 					}
 					log.Info().Msgf("seller, order:", sellOrder)
+					alert.NewTgClient().Notify(sellOrder, 515597060)
 
 					err = db.UpdateOrder(ctx, order.OrderId, order.Exchange, &dao.OrderUpdate{Check: true})
 					if err != nil {
